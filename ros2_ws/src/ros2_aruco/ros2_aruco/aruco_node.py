@@ -21,7 +21,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "marker_size",
-            0.0625,
+            0.15,  # recommended realistic default (15 cm)
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_DOUBLE,
                 description="Size of marker in meters"
@@ -30,7 +30,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "aruco_dictionary_id",
-            "DICT_5X5_250",
+            "DICT_4X4_250",
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING,
                 description="Aruco dictionary"
@@ -64,17 +64,18 @@ class ArucoNode(rclpy.node.Node):
             )
         )
 
-        # Read parameters
-        self.marker_size = self.get_parameter("marker_size").value
-        dictionary_name = self.get_parameter("aruco_dictionary_id").value
-        image_topic = self.get_parameter("image_topic").value
-        info_topic = self.get_parameter("camera_info_topic").value
+        # ---------------- READ PARAMETERS ---------------- #
+
+        self.marker_size = 0.5
+        dictionary_name = "DICT_4X4_250"
+        image_topic = "/world/aruco/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
+        info_topic = "/world/aruco/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/camera_info"
         self.camera_frame = self.get_parameter("camera_frame").value
 
         self.get_logger().info(f"Marker size: {self.marker_size}")
         self.get_logger().info(f"Dictionary: {dictionary_name}")
 
-        # ---------------- ARUCO SETUP (NEW API) ---------------- #
+        # ---------------- ARUCO SETUP ---------------- #
 
         try:
             dictionary_id = getattr(cv2.aruco, dictionary_name)
@@ -87,7 +88,6 @@ class ArucoNode(rclpy.node.Node):
         self.aruco_dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
         self.aruco_parameters = cv2.aruco.DetectorParameters()
 
-        # NEW detector object (OpenCV 4.7+)
         self.detector = cv2.aruco.ArucoDetector(
             self.aruco_dictionary,
             self.aruco_parameters
@@ -104,7 +104,7 @@ class ArucoNode(rclpy.node.Node):
             qos_profile_sensor_data
         )
 
-        self.create_subscription(
+        self.image_sub = self.create_subscription(
             Image,
             image_topic,
             self.image_callback,
@@ -125,7 +125,7 @@ class ArucoNode(rclpy.node.Node):
         self.intrinsic_mat = np.array(msg.k).reshape((3, 3))
         self.distortion = np.array(msg.d)
 
-        # Camera parameters assumed static
+        self.get_logger().info("Camera info received")
         self.destroy_subscription(self.info_sub)
 
     # ---------------- IMAGE CALLBACK ---------------- #
@@ -133,7 +133,7 @@ class ArucoNode(rclpy.node.Node):
     def image_callback(self, img_msg):
 
         if self.info_msg is None:
-            self.get_logger().warn("Camera info not received yet")
+            self.get_logger().warn("Waiting for camera info...")
             return
 
         cv_image = self.bridge.imgmsg_to_cv2(
@@ -141,8 +141,10 @@ class ArucoNode(rclpy.node.Node):
             desired_encoding="mono8"
         )
 
-        # NEW detection method
-        corners, marker_ids, rejected = self.detector.detectMarkers(cv_image)
+        corners, marker_ids, _ = self.detector.detectMarkers(cv_image)
+
+        if marker_ids is None:
+            return
 
         markers_msg = ArucoMarkers()
         pose_array = PoseArray()
@@ -155,33 +157,44 @@ class ArucoNode(rclpy.node.Node):
 
         markers_msg.header.frame_id = frame_id
         pose_array.header.frame_id = frame_id
-
         markers_msg.header.stamp = img_msg.header.stamp
         pose_array.header.stamp = img_msg.header.stamp
 
-        if marker_ids is None:
-            return
+        # ---------------- POSE ESTIMATION ---------------- #
 
-        # Pose estimation (unchanged API)
-        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-            corners,
-            self.marker_size,
-            self.intrinsic_mat,
-            self.distortion
-        )
+        half_size = self.marker_size / 2.0
+
+        object_points = np.array([
+            [-half_size,  half_size, 0],
+            [ half_size,  half_size, 0],
+            [ half_size, -half_size, 0],
+            [-half_size, -half_size, 0]
+        ], dtype=np.float32)
 
         for i, marker_id in enumerate(marker_ids):
+
+            corner = corners[i]
+
+            success, rvec, tvec = cv2.solvePnP(
+                object_points,
+                corner,
+                self.intrinsic_mat,
+                self.distortion
+            )
+
+            if not success:
+                continue
 
             pose = Pose()
 
             # Translation
-            pose.position.x = float(tvecs[i][0][0])
-            pose.position.y = float(tvecs[i][0][1])
-            pose.position.z = float(tvecs[i][0][2])
+            pose.position.x = float(tvec[0][0])
+            pose.position.y = float(tvec[1][0])
+            pose.position.z = float(tvec[2][0])
 
             # Rotation
             rot_matrix = np.eye(4)
-            rot_matrix[0:3, 0:3] = cv2.Rodrigues(rvecs[i][0])[0]
+            rot_matrix[0:3, 0:3] = cv2.Rodrigues(rvec)[0]
 
             quat = tf_transformations.quaternion_from_matrix(rot_matrix)
 
