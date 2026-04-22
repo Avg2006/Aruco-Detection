@@ -21,7 +21,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "marker_size",
-            0.0625,
+            0.5,
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_DOUBLE,
                 description="Size of marker in meters"
@@ -30,7 +30,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "aruco_dictionary_id",
-            "DICT_5X5_250",
+            "DICT_4X4_250",
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING,
                 description="Aruco dictionary"
@@ -39,7 +39,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "image_topic",
-            "/camera/image_raw",
+            "camera/image_raw",
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING,
                 description="Image topic"
@@ -141,6 +141,9 @@ class ArucoNode(rclpy.node.Node):
             desired_encoding="mono8"
         )
 
+        # Create a BGR color copy so the drawn axes and boxes show up in color
+        display_image = cv2.cvtColor(cv_image, cv2.COLOR_GRAY2BGR)
+
         # NEW detection method
         corners, marker_ids, rejected = self.detector.detectMarkers(cv_image)
 
@@ -159,49 +162,70 @@ class ArucoNode(rclpy.node.Node):
         markers_msg.header.stamp = img_msg.header.stamp
         pose_array.header.stamp = img_msg.header.stamp
 
-        if marker_ids is None:
-            return
+        # If markers are detected, compute poses and draw them
+        if marker_ids is not None:
+            
+            # Draw the green bounding box and ID for each marker
+            cv2.aruco.drawDetectedMarkers(display_image, corners, marker_ids)
 
-        # Pose estimation (unchanged API)
-        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-            corners,
-            self.marker_size,
-            self.intrinsic_mat,
-            self.distortion
-        )
+            # Pose estimation (unchanged API)
+            rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
+                corners,
+                self.marker_size,
+                self.intrinsic_mat,
+                self.distortion
+            )
 
-        for i, marker_id in enumerate(marker_ids):
+            for i, marker_id in enumerate(marker_ids):
 
-            pose = Pose()
+                # Draw the 3D XYZ axes on the marker
+                cv2.drawFrameAxes(
+                    display_image,
+                    self.intrinsic_mat,
+                    self.distortion,
+                    rvecs[i][0],
+                    tvecs[i][0],
+                    self.marker_size * 0.5  # Length of the axis lines
+                )
 
-            # Translation
-            pose.position.x = float(tvecs[i][0][0])
-            pose.position.y = float(tvecs[i][0][1])
-            pose.position.z = float(tvecs[i][0][2])
+                pose = Pose()
 
-            # Rotation
-            rot_matrix = np.eye(4)
-            rot_matrix[0:3, 0:3] = cv2.Rodrigues(rvecs[i][0])[0]
+                # Translation
+                pose.position.x = float(tvecs[i][0][0])
+                pose.position.y = float(tvecs[i][0][1])
+                pose.position.z = float(tvecs[i][0][2])
 
-            quat = tf_transformations.quaternion_from_matrix(rot_matrix)
+                # Rotation
+                rot_matrix = np.eye(4)
+                rot_matrix[0:3, 0:3] = cv2.Rodrigues(rvecs[i][0])[0]
 
-            pose.orientation.x = float(quat[0])
-            pose.orientation.y = float(quat[1])
-            pose.orientation.z = float(quat[2])
-            pose.orientation.w = float(quat[3])
+                quat = tf_transformations.quaternion_from_matrix(rot_matrix)
 
-            pose_array.poses.append(pose)
-            markers_msg.poses.append(pose)
-            markers_msg.marker_ids.append(int(marker_id[0]))
+                pose.orientation.x = float(quat[0])
+                pose.orientation.y = float(quat[1])
+                pose.orientation.z = float(quat[2])
+                pose.orientation.w = float(quat[3])
 
-        self.poses_pub.publish(pose_array)
-        self.markers_pub.publish(markers_msg)
+                pose_array.poses.append(pose)
+                markers_msg.poses.append(pose)
+                markers_msg.marker_ids.append(int(marker_id[0]))
+
+            # Publish the data
+            self.poses_pub.publish(pose_array)
+            self.markers_pub.publish(markers_msg)
+
+        # Show the video feed (this happens whether a marker is visible or not)
+        cv2.imshow("Aruco Visualization", display_image)
+        cv2.waitKey(1)
 
 
 def main():
     rclpy.init()
     node = ArucoNode()
     rclpy.spin(node)
+    
+    # Cleanup OpenCV windows on shutdown
+    cv2.destroyAllWindows()
     node.destroy_node()
     rclpy.shutdown()
 

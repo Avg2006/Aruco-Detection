@@ -1,3 +1,16 @@
 /build 
 /log 
 /install
+# ROS 2 Colcon build directories
+build/
+install/
+log/
+
+# Python specific
+__pycache__/
+*.pyc
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store

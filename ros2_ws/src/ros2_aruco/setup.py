@@ -27,6 +27,7 @@ setup(
             'aruco_generate_marker = ros2_aruco.aruco_generate_marker:main',
             'camera_node = ros2_aruco.pub_cam:main',
             'cam_info = ros2_aruco.camInfo:main',
+            'aruco_sub = ros2_aruco.aruco_subscriber:main',
         ],
     },
     extras_require={
