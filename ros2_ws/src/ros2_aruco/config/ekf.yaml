@@ -1,0 +1,33 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.1
+    two_d_mode: false 
+    publish_tf: true
+
+    # Frame assignments
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: camera_link  # Assuming the camera is the center of your robot for now
+    world_frame: odom
+
+    # --- SENSOR 1: ARUCO POSE ---
+    pose0: /aruco/pose_with_covariance
+    pose0_config: [true,  true,  true,
+                   true,  true,  true,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    pose0_differential: false
+    pose0_relative: false
+
+    # --- SENSOR 2: ESP32 IMU ---
+    imu0: /imu/data_raw
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  true,  true,  true,
+                  true,  true,  true]
+    imu0_differential: false
+    imu0_relative: true
+    imu0_remove_gravitational_acceleration: true

@@ -1,0 +1,20 @@
+{
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/build/turtle_shapes",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/install/turtle_shapes/lib/python3.10/site-packages",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/build/task_1",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/install/task_1/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/build/turtle_shapes",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/install/turtle_shapes/lib/python3.10/site-packages",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/build/task_1",
+        "/home/zak/anveshak/anveshak_rover/ros2_ws/install/task_1/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "ros.distro": "humble"
+}

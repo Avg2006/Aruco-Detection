@@ -13,7 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml'))
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,7 +26,9 @@ setup(
         'console_scripts': [
             'aruco_node = ros2_aruco.aruco_node:main',
             'drone = ros2_aruco.drone:main',
-            'aruco_generate_marker = ros2_aruco.aruco_generate_marker:main'
+            'aruco_generate_marker = ros2_a.aruco_generate_marker:main',
+            'aruco_ekf = ros2_aruco.aruco_ekf:main',
+            'aruco_fusion_node = ros2_aruco.aruco_fusion_node:main',
         ],
     },
 )

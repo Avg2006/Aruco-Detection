@@ -5,9 +5,12 @@ from cv_bridge import CvBridge
 import numpy as np
 import cv2
 import tf_transformations
+from collections import deque
+
 
 from sensor_msgs.msg import CameraInfo, Image
 from geometry_msgs.msg import PoseArray, Pose
+from nav_msgs.msg import Odometry 
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 
@@ -30,7 +33,7 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "aruco_dictionary_id",
-            "DICT_4X4_250",
+            "DICT_5X5_250",
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING,
                 description="Aruco dictionary"
@@ -48,7 +51,8 @@ class ArucoNode(rclpy.node.Node):
 
         self.declare_parameter(
             "camera_info_topic",
-            "/camera/camera_info",
+            "/" \
+            "camera_info",
             ParameterDescriptor(
                 type=ParameterType.PARAMETER_STRING,
                 description="Camera info topic"
@@ -63,13 +67,18 @@ class ArucoNode(rclpy.node.Node):
                 description="Camera optical frame"
             )
         )
+        self.c = 0
+        self.prev_time = 0
 
+        self.window_size = 5
+        self.position_history = {}
+        self.vel_history = {}
         # ---------------- READ PARAMETERS ---------------- #
 
-        self.marker_size = 0.5
-        dictionary_name = "DICT_4X4_250"
-        image_topic = "/world/aruco/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image"
-        info_topic = "/world/aruco/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/camera_info"
+        self.marker_size = 0.08664
+        dictionary_name = "DICT_5X5_250"
+        image_topic = "/camera/image_raw"
+        info_topic = "/camera_info"
         self.camera_frame = self.get_parameter("camera_frame").value
 
         self.get_logger().info(f"Marker size: {self.marker_size}")
@@ -113,6 +122,8 @@ class ArucoNode(rclpy.node.Node):
 
         self.poses_pub = self.create_publisher(PoseArray, "aruco_poses", 10)
         self.markers_pub = self.create_publisher(ArucoMarkers, "aruco_markers", 10)
+        self.vel_pub = self.create_publisher(Odometry, 'aruco_vel', 10)
+        
 
         self.info_msg = None
         self.intrinsic_mat = None
@@ -148,6 +159,7 @@ class ArucoNode(rclpy.node.Node):
 
         markers_msg = ArucoMarkers()
         pose_array = PoseArray()
+        vel_msg = Odometry()
 
         frame_id = (
             self.camera_frame
@@ -188,30 +200,77 @@ class ArucoNode(rclpy.node.Node):
             pose = Pose()
 
             # Translation
-            pose.position.x = float(tvec[0][0])
-            pose.position.y = float(tvec[1][0])
-            pose.position.z = float(tvec[2][0])
+            if not success:
+                continue
+                
+            m_id = int(marker_id[0])
 
-            # Rotation
-            rot_matrix = np.eye(4)
-            rot_matrix[0:3, 0:3] = cv2.Rodrigues(rvec)[0]
+            # 1. Extract the raw position
+            raw_x = float(tvec[0][0])
+            raw_y = float(tvec[1][0])
+            raw_z = float(tvec[2][0])
 
-            quat = tf_transformations.quaternion_from_matrix(rot_matrix)
+            # 2. Initialize the history queue if this is a new marker
+            if m_id not in self.position_history:
+                self.position_history[m_id] = deque(maxlen=self.window_size)
 
-            pose.orientation.x = float(quat[0])
-            pose.orientation.y = float(quat[1])
-            pose.orientation.z = float(quat[2])
-            pose.orientation.w = float(quat[3])
+            # 3. Add the new raw position to the sliding window
+            self.position_history[m_id].append((raw_x, raw_y, raw_z))
+
+            # 4. Extract lists of individual axes
+            history = self.position_history[m_id]
+            xs = [p[0] for p in history]
+            ys = [p[1] for p in history]
+            zs = [p[2] for p in history]
+
+            # 5. Calculate the MEDIAN using numpy
+            # (Note: we cast back to float because np.median returns a numpy type)
+            pose.position.x = float(np.median(xs))
+            pose.position.y = float(np.median(ys))
+            pose.position.z = float(np.median(zs))
+
+
+            vel_msg.pose.pose.position.x = float(np.median(xs)) 
+            vel_msg.pose.pose.position.y = float(np.median(ys))
+            vel_msg.pose.pose.position.z = float(np.median(zs))
+
 
             pose_array.poses.append(pose)
             markers_msg.poses.append(pose)
             markers_msg.marker_ids.append(int(marker_id[0]))
+             # ---------------- Velocity ---------------- #
+            seconds = img_msg.header.stamp.sec
+            nanoseconds = img_msg.header.stamp.nanosec
+            time_in_seconds = img_msg.header.stamp.sec + (img_msg.header.stamp.nanosec * 1e-9)
+            dt = time_in_seconds - self.prev_time
+            if dt > 0 and self.c == 1:
+                raw_vx = (pose.position.x - self.prev_x)/dt
+                raw_vy = (pose.position.y - self.prev_y)/dt
+                raw_vz = (pose.position.z - self.prev_z)/dt
+                if m_id not in self.vel_history:
+                    self.vel_history[m_id] = deque(maxlen=self.window_size)
+                self.vel_history[m_id].append((raw_vx, raw_vy, raw_vz))
+                history2 = self.vel_history[m_id]
+                vx = [p[0] for p in history2]
+                vy = [p[1] for p in history2]
+                vz = [p[2] for p in history2]
+                vel_msg.twist.twist.linear.x = float(np.median(vx))
+                vel_msg.twist.twist.linear.y = float(np.median(vy))
+                vel_msg.twist.twist.linear.z = float(np.median(vz))
+            self.prev_x = pose.position.x
+            self.prev_y = pose.position.y
+            self.prev_z = pose.position.z
+            self.prev_time = time_in_seconds
+            self.c = 1
 
         self.poses_pub.publish(pose_array)
         self.markers_pub.publish(markers_msg)
+        self.vel_pub.publish(vel_msg)
+
+       
 
 
-def main():
+def main(args=None):
     rclpy.init()
     node = ArucoNode()
     rclpy.spin(node)
